@@ -3647,6 +3647,118 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps aggregate multi-round-trip result usage out of the context meter", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "multi-request turn",
+        attachments: [],
+      });
+
+      // Per-request evidence from the live stream: the final model call's
+      // prompt (the message_delta shape for a proxy carrying input counters).
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-aggregate-result",
+        uuid: "stream-delta-aggregate",
+        parent_tool_use_id: null,
+        event: {
+          type: "message_delta",
+          delta: { type: "stop_reason", stop_reason: "end_turn" },
+          usage: {
+            input_tokens: 3265,
+            cache_read_input_tokens: 19456,
+            output_tokens: 396,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // Assistant frames from a proxy that mirrors no usage at all.
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-aggregate-result",
+        uuid: "assistant-aggregate-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-aggregate-1",
+          role: "assistant",
+          content: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      } as unknown as SDKMessage);
+
+      // The SDK's turn result for a five-round-trip turn: usage summed
+      // across every request (23117 live vs 112150 summed).
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 100,
+        duration_api_ms: 90,
+        num_turns: 5,
+        result: "done",
+        stop_reason: "end_turn",
+        session_id: "sdk-session-aggregate-result",
+        usage: {
+          input_tokens: 51521,
+          cache_read_input_tokens: 58368,
+          cache_creation_input_tokens: 0,
+          output_tokens: 2261,
+          iterations: [],
+        },
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            inputTokens: 109889,
+            outputTokens: 2261,
+            cacheReadInputTokens: 58368,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 1,
+            contextWindow: 1000000,
+            maxOutputTokens: 32000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      const finalUsage = usageEvents.at(-1);
+      if (finalUsage?.type !== "thread.token-usage.updated") {
+        assert.fail("expected a final token usage event");
+      }
+      // The meter stays on the last per-request snapshot (23117), bumped to
+      // the result's context window; the aggregate total only feeds
+      // totalProcessedTokens (112150 = the turn's summed throughput). The
+      // summed figure must never surface as usedTokens.
+      assert.deepEqual(finalUsage.payload.usage, {
+        usedTokens: 23117,
+        lastUsedTokens: 23117,
+        totalProcessedTokens: 112150,
+        inputTokens: 22721,
+        outputTokens: 396,
+        maxTokens: 1000000,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves compacted usage when completion follows an older assistant frame", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
