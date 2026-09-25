@@ -2371,6 +2371,159 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("interrupted multi-round-trip turn keeps the meter on per-request evidence", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      // Per-request evidence from the final completed round-trip before the
+      // user interrupts (message_delta shape for a zero-usage proxy).
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-abort-aggregate",
+        uuid: "stream-delta-abort-aggregate",
+        parent_tool_use_id: null,
+        event: {
+          type: "message_delta",
+          delta: { type: "stop_reason", stop_reason: "tool_use" },
+          usage: {
+            input_tokens: 4000,
+            cache_read_input_tokens: 12000,
+            output_tokens: 300,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // Stop lands mid-tool-call on the next round-trip: the aggregate
+      // result sums every round-trip so far, but the turn was interrupted,
+      // so the sum is both partial and cumulative — still not context.
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+        stop_reason: "tool_use",
+        terminal_reason: "aborted_tools",
+        num_turns: 2,
+        session_id: "sdk-session-abort-aggregate",
+        uuid: "result-abort-aggregate",
+        usage: {
+          input_tokens: 8000,
+          cache_read_input_tokens: 24000,
+          output_tokens: 600,
+        },
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnCompleted = runtimeEvents.findLast((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
+      }
+      const finalUsage = runtimeEvents.findLast(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.equal(finalUsage?.type, "thread.token-usage.updated");
+      if (finalUsage?.type === "thread.token-usage.updated") {
+        // The meter holds the last per-request reading (16300), never the
+        // interrupted aggregate (32600).
+        assert.deepEqual(finalUsage.payload.usage, {
+          usedTokens: 16300,
+          lastUsedTokens: 16300,
+          totalProcessedTokens: 32600,
+          inputTokens: 16000,
+          outputTokens: 300,
+          maxTokens: 200000,
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interrupted result without usage emits no meter snapshot", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      // The common live shape (observed in the rig): Stop lands mid-turn on
+      // a zero-usage proxy and the CLI's interrupted result carries no
+      // usage block at all. With no per-request evidence in the turn and
+      // none carried by the result, the meter must emit nothing.
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+        stop_reason: "tool_use",
+        terminal_reason: "aborted_tools",
+        num_turns: 2,
+        session_id: "sdk-session-abort-no-usage",
+        uuid: "result-abort-no-usage",
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnCompleted = runtimeEvents.findLast((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(turnCompleted.payload.state, "interrupted");
+      }
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.equal(usageEvents.length, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("fails a turn when the result carries a give-up terminal_reason", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -3753,6 +3906,224 @@ describe("ClaudeAdapterLive", () => {
         outputTokens: 396,
         maxTokens: 1000000,
       });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("aggregate result with per-request iterations feeds the meter per request", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "iterated turn",
+        attachments: [],
+      });
+
+      // A producer that reports per-request usage inside the result's
+      // `iterations` array (the SDK's eventual detailed shape) alongside the
+      // turn-wide sum. The last iteration is the final request's prompt:
+      // that, not the sum, is context evidence.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 100,
+        duration_api_ms: 90,
+        num_turns: 3,
+        result: "done",
+        stop_reason: "end_turn",
+        session_id: "sdk-session-iterated-result",
+        usage: {
+          input_tokens: 900,
+          cache_read_input_tokens: 600,
+          output_tokens: 300,
+          iterations: [
+            { input_tokens: 300, output_tokens: 80 },
+            { input_tokens: 600, output_tokens: 100 },
+            { input_tokens: 900, cache_read_input_tokens: 600, output_tokens: 120 },
+          ],
+        },
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usageEvent = runtimeEvents.findLast(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        // usedTokens comes from the last iteration (900 + 600 + 120 = 1620),
+        // not from the summed record (900 + 600 + 300 = 1800); the sum still
+        // feeds totalProcessedTokens.
+        assert.deepEqual(usageEvent.payload.usage, {
+          usedTokens: 1620,
+          lastUsedTokens: 1620,
+          totalProcessedTokens: 1800,
+          inputTokens: 1500,
+          outputTokens: 120,
+          maxTokens: 200000,
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("aggregate result with no per-request evidence leaves the meter untouched", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "opaque turn",
+        attachments: [],
+      });
+
+      // Multi-round-trip aggregate with no assistant/stream evidence and no
+      // total_tokens — the input/output counters are summed across the turn
+      // and must not fabricate a context reading on their own.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 100,
+        duration_api_ms: 90,
+        num_turns: 4,
+        result: "done",
+        stop_reason: "end_turn",
+        session_id: "sdk-session-opaque-aggregate",
+        usage: {
+          input_tokens: 40_000,
+          cache_read_input_tokens: 30_000,
+          output_tokens: 2_000,
+        },
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      // No usage snapshot exists to keep, and the aggregate must not become
+      // one: nothing is emitted (same rule as the total-only result).
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.equal(usageEvents.length, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("resume-handshake num_turns 0 result never feeds the context meter", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        num_turns: 1,
+        session_id: "sdk-session-1",
+        uuid: "result-real",
+        usage: {
+          input_tokens: 500,
+          cache_read_input_tokens: 1500,
+          output_tokens: 100,
+        },
+        modelUsage: {
+          [SYNTHETIC_CLAUDE_CAPABLE_MODEL]: {
+            contextWindow: 200000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // Resume handshake result (num_turns: 0, zeroed usage): no turn is in
+      // flight, so it lands in the completeTurn branch with no turnState.
+      // Its zeroed usage must neither emit a meter snapshot nor clobber the
+      // one the real turn established.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        num_turns: 0,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        session_id: "sdk-session-1",
+        uuid: "result-handshake",
+      } as unknown as SDKMessage);
+
+      harness.query.finish();
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      // The zeroed handshake result carries no active usage, so it cannot
+      // produce a fresh snapshot: every meter reading after it is a hold of
+      // the real turn's snapshot (2100), never a fabricated or zeroed one.
+      assert.ok(usageEvents.length >= 1);
+      for (const event of usageEvents) {
+        if (event.type === "thread.token-usage.updated") {
+          assert.deepEqual(event.payload.usage, {
+            usedTokens: 2100,
+            lastUsedTokens: 2100,
+            inputTokens: 2000,
+            outputTokens: 100,
+            maxTokens: 200000,
+          });
+        }
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
