@@ -2657,9 +2657,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resultUsageRecord !== undefined &&
       (hasResultUsageIteration ||
         claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
+    // A turn spanning multiple model round-trips (num_turns > 1) sums
+    // per-request usage into result.usage: the counters are cumulative
+    // throughput across the turn, not the final request's prompt size.
+    // Treating them as active context inflates the meter (112k on a 23k
+    // thread; clamped to a fake full-window when the sum passes it). Like
+    // explicit total_tokens, that aggregate only feeds totalProcessedTokens;
+    // the meter keeps the last per-request evidence (assistant/message_delta
+    // snapshots). Single-round-trip results (num_turns <= 1, or a producer
+    // that omits num_turns) stay per-request and keep feeding active usage.
+    const resultAggregateAcrossRoundTrips =
+      resultUsageRecord !== undefined &&
+      !hasResultUsageIteration &&
+      typeof result?.num_turns === "number" &&
+      Number.isFinite(result.num_turns) &&
+      result.num_turns > 1;
     const resultTotalOnly =
       resultUsageRecord !== undefined &&
       !resultHasActiveUsage &&
+      claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
+    const resultAggregateOnly =
+      (resultTotalOnly || resultAggregateAcrossRoundTrips) &&
       claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
     const resultIterationSnapshot = resultUsageRecord
       ? normalizeClaudeActiveTokenUsage(
@@ -2678,7 +2696,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       latestAssistantSnapshot ??
       (context.turnState?.compactedSinceLatestAssistantUsage
         ? undefined
-        : resultTotalOnly && lastGoodUsage
+        : resultAggregateOnly && lastGoodUsage
           ? {
               ...lastGoodUsage,
               ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
