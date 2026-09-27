@@ -98,12 +98,18 @@ const importTranscriptCore = Effect.fn("AgentSessionImporter.importTranscriptCor
     readonly projectId: ProjectId;
     readonly workspaceRoot: string;
     readonly transcript: ImportableTranscript;
+    /**
+     * Replace an existing imported thread with the fresh transcript. Only
+     * safe when the thread still holds nothing but imported history — the
+     * caller must have checked that.
+     */
+    readonly replace?: boolean;
   }) {
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
     const crypto = yield* Crypto.Crypto;
-    const { projectId, workspaceRoot, transcript } = options;
+    const { projectId, workspaceRoot, transcript, replace = false } = options;
     const threadId = ThreadId.make(
       `import:${transcript.providerInstanceId}:${transcript.providerSessionId}`,
     );
@@ -133,7 +139,12 @@ const importTranscriptCore = Effect.fn("AgentSessionImporter.importTranscriptCor
     const importedHistoryPresent = Option.isSome(existingThread)
       ? hasImportedHistory(existingThread.value)
       : false;
-    if (Option.isSome(existingThread) && importedHistoryPresent && Option.isSome(existingBinding)) {
+    if (
+      !replace &&
+      Option.isSome(existingThread) &&
+      importedHistoryPresent &&
+      Option.isSome(existingBinding)
+    ) {
       return true;
     }
 
@@ -142,6 +153,21 @@ const importTranscriptCore = Effect.fn("AgentSessionImporter.importTranscriptCor
       hasImportBlockingActivity(existingThread.value, importedHistoryPresent)
     ) {
       return yield* new AgentSessionThreadModifiedError({ threadId });
+    }
+
+    // A replace tears down the old incarnation first. Deletion is a soft
+    // delete and every projector resets its rows when the id is created
+    // again, so re-creating the same thread id is the supported path.
+    let replacing = false;
+    if (replace && Option.isSome(existingThread)) {
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(yield* crypto.randomUUIDv4),
+        threadId,
+      });
+      // The snapshot above predates the delete; the fresh incarnation is
+      // empty, so both create and history import must proceed.
+      replacing = true;
     }
 
     if (
@@ -174,7 +200,7 @@ const importTranscriptCore = Effect.fn("AgentSessionImporter.importTranscriptCor
       );
     }
 
-    if (Option.isNone(existingThread)) {
+    if (replacing || Option.isNone(existingThread)) {
       yield* engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make(yield* crypto.randomUUIDv4),
@@ -191,7 +217,7 @@ const importTranscriptCore = Effect.fn("AgentSessionImporter.importTranscriptCor
       });
     }
 
-    if (!importedHistoryPresent) {
+    if (replacing || !importedHistoryPresent) {
       yield* engine.dispatch({
         type: "thread.history.import",
         commandId: CommandId.make(yield* crypto.randomUUIDv4),
@@ -385,16 +411,19 @@ export const importAgentSessionsById = Effect.fn("importAgentSessionsById")(func
   );
 
   const importedThreadIds = new Set<ThreadId>();
+  const updatedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
   let skippedCount = 0;
   for (const entry of listed) {
     const key = `${entry.thread.providerInstanceId}\0${entry.thread.providerSessionId}`;
     if (!requested.has(key)) continue;
     requested.delete(key);
+    const isUpdate = input.mode === "update" && entry.alreadyImported && entry.stale;
     const imported = yield* importTranscriptCore({
       projectId: input.projectId,
       workspaceRoot,
       transcript: entry.thread,
+      replace: isUpdate,
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not import an agent session", {
@@ -413,6 +442,7 @@ export const importAgentSessionsById = Effect.fn("importAgentSessionsById")(func
         .pipe(Effect.ignore);
       importedThreadIds.add(threadId);
       importedCount += 1;
+      if (isUpdate) updatedThreadIds.add(threadId);
     } else {
       skippedCount += 1;
     }
@@ -422,5 +452,9 @@ export const importAgentSessionsById = Effect.fn("importAgentSessionsById")(func
   // root, parse failure) read as skipped rather than silently vanishing.
   skippedCount += requested.size;
 
-  return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  return {
+    importedCount,
+    skippedCount,
+    ...(updatedThreadIds.size > 0 ? { updatedCount: updatedThreadIds.size } : {}),
+  } satisfies AgentSessionImportResult;
 });

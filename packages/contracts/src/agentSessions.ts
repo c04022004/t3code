@@ -100,6 +100,8 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  /** Sessions re-imported because their transcript changed on disk. */
+  updatedCount: Schema.optionalKey(NonNegativeInt),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
@@ -120,6 +122,12 @@ export const AgentSessionSummary = Schema.Struct({
   messageCount: NonNegativeInt,
   /** Marks sessions whose transcript already landed in this project. */
   alreadyImported: Schema.Boolean,
+  /**
+   * `true` when an imported transcript changed on disk since its import, so
+   * the imported thread no longer shows the session's latest history.
+   * Absent when the session is not imported.
+   */
+  stale: Schema.optionalKey(Schema.Boolean),
 });
 export type AgentSessionSummary = typeof AgentSessionSummary.Type;
 
@@ -143,6 +151,12 @@ export const AgentSessionImportSessionsInput = Schema.Struct({
       providerSessionId: TrimmedNonEmptyString,
     }),
   ),
+  /**
+   * `update` re-imports selected sessions whose transcript changed since the
+   * original import by replacing the imported thread with fresh history.
+   * `fresh` (default) leaves imported sessions untouched.
+   */
+  mode: Schema.optional(Schema.Literals(["fresh", "update"])),
 });
 export type AgentSessionImportSessionsInput = typeof AgentSessionImportSessionsInput.Type;
 
