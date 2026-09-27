@@ -152,11 +152,11 @@ export const AgentSessionImportSessionsInput = Schema.Struct({
     }),
   ),
   /**
-   * `update` re-imports selected sessions whose transcript changed since the
-   * original import by replacing the imported thread with fresh history.
-   * `fresh` (default) leaves imported sessions untouched.
+   * `auto` (default) imports new sessions, replaces selected sessions whose
+   * transcript changed since their import, and skips up-to-date ones.
+   * `fresh` leaves every imported session untouched.
    */
-  mode: Schema.optional(Schema.Literals(["fresh", "update"])),
+  mode: Schema.optional(Schema.Literals(["auto", "fresh"])),
 });
 export type AgentSessionImportSessionsInput = typeof AgentSessionImportSessionsInput.Type;
 
