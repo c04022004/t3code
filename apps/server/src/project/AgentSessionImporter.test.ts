@@ -1411,6 +1411,71 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       }),
     );
 
+    it.effect("auto mode still replaces a stale thread the user un-settled after import", () =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
+        const claudeThread = makeThread("claudeAgent");
+        const listed: Array<AgentSessionScanner.AgentSessionListedThread> = [
+          {
+            thread: claudeThread,
+            source: makeThreadOutcome(claudeThread).source,
+            alreadyImported: true,
+            stale: true,
+          },
+        ];
+
+        const result = yield* importAgentSessionsById({
+          projectId: PROJECT_ID,
+          mode: "auto",
+          sessions: [
+            {
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              providerSessionId: CLAUDE_SESSION_ID,
+            },
+          ],
+        }).pipe(
+          Effect.provideService(
+            AgentSessionScanner.AgentSessionScanner,
+            AgentSessionScanner.AgentSessionScanner.of({
+              scan: Effect.die("unused"),
+              listSessionThreads: () => Effect.succeed(listed),
+              recentThreads: () => Stream.empty,
+            }),
+          ),
+          Effect.provideService(
+            OrchestrationEngine.OrchestrationEngineService,
+            makeEngine(commands),
+          ),
+          Effect.provideService(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            makeDirectory(bindings),
+          ),
+          Effect.provide(
+            makeSnapshotsLayer({
+              project: makeProject(),
+              // Settle state is organizational: the user re-opened this
+              // thread after its import (override "active", unsettledAt
+              // set), which must not block a transcript refresh.
+              getThread: () =>
+                Option.some({
+                  ...makeProjectedThread({ source: "claudeAgent", imported: true }),
+                  settledOverride: "active" as const,
+                  unsettledAt: "2026-09-27T13:30:45.570Z",
+                }),
+            }),
+          ),
+        );
+
+        expect(result).toEqual({ importedCount: 1, skippedCount: 0, updatedCount: 1 });
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.delete",
+          "thread.create",
+          "thread.history.import",
+        ]);
+      }),
+    );
+
     it.effect("auto mode refuses to replace a thread the user has chatted in", () =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationCommand> = [];

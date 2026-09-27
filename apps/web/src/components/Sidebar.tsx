@@ -3150,6 +3150,15 @@ export default function Sidebar() {
             title: "History updated",
             description: "The thread now shows the session's latest transcript.",
           });
+        } else if (result.value.skippedCount > 0) {
+          // The server refused to replace the thread (e.g. it now holds
+          // content the import must not clobber). Say so instead of the
+          // misleading "already up to date".
+          toastManager.add({
+            type: "error" as const,
+            title: "Could not bring history up to date",
+            description: "The server refused to replace this thread's history.",
+          });
         } else {
           toastManager.add({
             type: "info" as const,

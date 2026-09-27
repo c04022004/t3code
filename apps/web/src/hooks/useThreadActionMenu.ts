@@ -249,6 +249,14 @@ export function useThreadActionMenu(input: {
                 title: "History updated",
                 description: "The thread now shows the session's latest transcript.",
               });
+            } else if (result.value.skippedCount > 0) {
+              // The server refused to replace the thread rather than
+              // finding nothing to do — never claim "already up to date".
+              toastManager.add({
+                type: "error",
+                title: "Could not bring history up to date",
+                description: "The server refused to replace this thread's history.",
+              });
             } else {
               toastManager.add({ type: "success", title: "History already up to date" });
             }

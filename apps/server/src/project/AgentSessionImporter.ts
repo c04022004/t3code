@@ -243,6 +243,29 @@ function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,
 ): boolean {
+  // Settle state is organizational, not content: an un-settled imported
+  // thread (e.g. the user re-opened it after a history import) must still
+  // accept a transcript refresh, so an already-imported thread ignores the
+  // whole settle group. A first import of a thread the user already
+  // interacted with still respects it.
+  if (importedHistoryPresent) {
+    return (
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      thread.latestTurn !== null ||
+      thread.session !== null ||
+      thread.messages.some((message) => !isImportedAgentSessionMessageId(message.id)) ||
+      thread.proposedPlans.length > 0 ||
+      thread.activities.length > 0 ||
+      thread.checkpoints.length > 0 ||
+      thread.snoozedUntil != null ||
+      thread.snoozedAt != null ||
+      thread.pinnedAt != null ||
+      thread.pinOrderKey != null ||
+      thread.titleRegeneration != null ||
+      thread.linkedPullRequest != null
+    );
+  }
   return (
     thread.archivedAt !== null ||
     thread.deletedAt !== null ||
@@ -259,9 +282,8 @@ function hasImportBlockingActivity(
     thread.titleRegeneration != null ||
     thread.linkedPullRequest != null ||
     thread.unsettledAt != null ||
-    (importedHistoryPresent
-      ? thread.settledOverride !== "settled"
-      : thread.settledOverride !== null || thread.settledAt !== null)
+    thread.settledOverride !== null ||
+    thread.settledAt !== null
   );
 }
 
