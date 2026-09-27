@@ -23,3 +23,17 @@ export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRunt
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
 });
+
+/**
+ * Local-only per-session picker: list every session transcript of a project's
+ * workspace root (no recency window) and import exactly the checked ones.
+ */
+export const agentSessionListSessions = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:list-sessions",
+  tag: WS_METHODS.agentSessionsListSessions,
+});
+
+export const agentSessionImportSessions = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:import-sessions",
+  tag: WS_METHODS.agentSessionsImportSessions,
+});

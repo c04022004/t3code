@@ -103,6 +103,49 @@ export const AgentSessionImportResult = Schema.Struct({
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
+// ── Local-only granular import ────────────────────────────────────────────
+// The onboarding importer imports every recent session of a project at once.
+// These schemas back a per-session picker: list the individual sessions of a
+// workspace root, then import exactly the ones the user checked.
+
+/** One importable agent session, as shown in the picker. */
+export const AgentSessionSummary = Schema.Struct({
+  provider: AgentSessionSource,
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  model: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  messageCount: NonNegativeInt,
+  /** Marks sessions whose transcript already landed in this project. */
+  alreadyImported: Schema.Boolean,
+});
+export type AgentSessionSummary = typeof AgentSessionSummary.Type;
+
+export const AgentSessionListSessionsInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+});
+export type AgentSessionListSessionsInput = typeof AgentSessionListSessionsInput.Type;
+
+export const AgentSessionListSessionsResult = Schema.Struct({
+  sessions: Schema.Array(AgentSessionSummary),
+});
+export type AgentSessionListSessionsResult = typeof AgentSessionListSessionsResult.Type;
+
+export const AgentSessionImportSessionsInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  sessions: Schema.Array(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      providerSessionId: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type AgentSessionImportSessionsInput = typeof AgentSessionImportSessionsInput.Type;
+
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {

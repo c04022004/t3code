@@ -39,6 +39,7 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { AgentSessionImportSettings } from "./AgentSessionImportSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
@@ -479,6 +480,8 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectActionsSettings />
+        {/* Local-only: granular agent history import for this project. */}
+        <AgentSessionImportSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
           <SettingsRow
