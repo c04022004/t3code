@@ -1,7 +1,11 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import {
+  contextWindowCacheHitRatio,
+  formatContextWindowCacheHit,
+  formatContextWindowCompactionMessage,
+} from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
@@ -30,6 +34,12 @@ export function ContextWindowMeter(props: {
   const dashOffset = circumference * (1 - normalizedPercentage / 100);
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
+  const cacheHitLabel = formatContextWindowCacheHit(
+    contextWindowCacheHitRatio({
+      cachedInputTokens: usage.cachedInputTokens,
+      inputTokens: usage.inputTokens,
+    }),
+  );
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded
     ? "var(--color-error)"
@@ -122,6 +132,12 @@ export function ContextWindowMeter(props: {
                 className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
                 style={{ width: `${normalizedPercentage}%`, backgroundColor: usageColor }}
               />
+            </div>
+          ) : null}
+          {cacheHitLabel ? (
+            <div className="flex items-center justify-between gap-3 text-2xs leading-4">
+              <span className="text-secondary-label">Cache hit</span>
+              <span className="font-medium tabular-nums text-secondary-label">{cacheHitLabel}</span>
             </div>
           ) : null}
           {showTotalProcessed ? (
