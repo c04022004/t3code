@@ -4176,8 +4176,13 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   const { threadRef, onImageExpand } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
+  // Local patch: entries inside an expanded tool group open with their
+  // contents visible, so the expand-all setting surfaces the full detail
+  // without a second click per row.
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () =>
+      (groupView?.state.expandedEntries.has(workEntry.id) ?? false) ||
+      isExpandedToolGroupEntry,
   );
   const toggleExpanded = () => {
     const next = !expanded;
