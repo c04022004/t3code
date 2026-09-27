@@ -1,27 +1,33 @@
 <!--
-README for the local branch feat/local-meter-and-tool-rows — local-only
-customizations on top of t3code v0.0.42. This branch mixes three kinds of
-commits, and only one kind is upstreamed:
+README for the local t3code customization work on top of v0.0.42. The work is
+split into topic branches merged by an integration branch; only the meter
+fixes are upstreamed.
 
-  1. meter fixes (3 commits)  → submitted upstream as PR #13659
-  2. UI features (4 commits)  → local-only, may become upstream PRs later
-  3. local-only patches (5+)  → NEVER upstream, see "Local-only features"
+  1. meter fixes (3 commits)   → submitted upstream as PR #13659
+  2. UI enhancements (4)       → local-only, may become upstream PRs later
+  3. history import (5)        → local-only, may become upstream PRs later
+  4. local-only patches (2)    → NEVER upstream, see "Local-only features"
 
-Upstream PRs from this branch must cherry-pick individual commits — never
-merge the branch — or the local-only patches would leak.
+Upstream PRs must cherry-pick from the individual topic branches — never
+merge `integration` — or the local-only patches would leak.
 -->
 
-# Local branch: `feat/local-meter-and-tool-rows`
+# Local branches
 
-Local customizations on top of t3code **v0.0.42** (base `719a76ca1d`). The
-branch carries three distinct groups of work; only the meter fixes are headed
-upstream.
+Local customizations on top of t3code **v0.0.42** (base `719a76ca1d`), kept as
+topic branches assembled by `integration`:
 
-| Group                        | Commits | Destination                                                          |
-| ---------------------------- | ------- | -------------------------------------------------------------------- |
-| Context-meter fixes          | 3       | Upstream PR [#13659](https://github.com/pingdotgg/t3code/pull/13659) |
-| History import & UI features | 9       | Local; import features may be proposed upstream later                |
-| Local-only patches           | 1 (MCP) | **Never upstream**                                                   |
+| Branch                 | Commits         | Destination                                                          |
+| ---------------------- | --------------- | -------------------------------------------------------------------- |
+| `fix/context-meter`    | 3               | Upstream PR [#13659](https://github.com/pingdotgg/t3code/pull/13659) |
+| `feat/ui-enhancements` | 4               | Local; may be proposed upstream later                                |
+| `feat/history-import`  | 5               | Local; may be proposed upstream later                                |
+| `local-only-patches`   | 2 (MCP, docs)   | **Never upstream**                                                   |
+| `integration`          | merges all four | What releases build from                                             |
+
+`feat/local-meter-and-tool-rows` (the original single branch) and
+`feat/ui-and-import` (its first split) remain on the fork as historical
+snapshots; neither is updated anymore.
 
 ## Running the standalone release
 
