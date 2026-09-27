@@ -661,6 +661,7 @@ function claudeActiveTokens(usage: Record<string, unknown>): number {
 function makeClaudeTokenUsageSnapshot(input: {
   readonly activeTokens: number;
   readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
   readonly outputTokens?: number;
   readonly contextWindow?: number;
   readonly totalProcessedTokens?: number;
@@ -680,6 +681,7 @@ function makeClaudeTokenUsageSnapshot(input: {
     (maxTokens !== undefined ? Math.min(activeTokens, maxTokens) : activeTokens);
   const totalProcessedTokens = finiteNonNegativeInteger(input.totalProcessedTokens);
   const inputTokens = finiteNonNegativeInteger(input.inputTokens);
+  const cachedInputTokens = finiteNonNegativeInteger(input.cachedInputTokens);
   const outputTokens = finiteNonNegativeInteger(input.outputTokens);
 
   return {
@@ -689,6 +691,7 @@ function makeClaudeTokenUsageSnapshot(input: {
       ? { totalProcessedTokens }
       : {}),
     ...(inputTokens !== undefined && inputTokens > 0 ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined && cachedInputTokens > 0 ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined && outputTokens > 0 ? { outputTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(input.compactsAutomatically !== undefined
@@ -712,6 +715,7 @@ function normalizeClaudeActiveTokenUsage(
   const usage = value as Record<string, unknown>;
   const activeUsage = lastClaudeUsageIteration(usage) ?? usage;
   const inputTokens = claudeUsageInputTokens(activeUsage);
+  const cachedInputTokens = finiteNonNegativeInteger(activeUsage.cache_read_input_tokens);
   const outputTokens = claudeUsageOutputTokens(activeUsage);
   const activeTokens = claudeActiveTokens(activeUsage);
   if (activeTokens <= 0) {
@@ -721,6 +725,7 @@ function normalizeClaudeActiveTokenUsage(
   return makeClaudeTokenUsageSnapshot({
     activeTokens,
     inputTokens,
+    cachedInputTokens,
     outputTokens,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),

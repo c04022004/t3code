@@ -2248,6 +2248,7 @@ describe("ClaudeAdapterLive", () => {
           lastUsedTokens: 16300,
           totalProcessedTokens: 32600,
           inputTokens: 16000,
+          cachedInputTokens: 12000,
           outputTokens: 300,
           maxTokens: 200000,
         });
@@ -3696,6 +3697,7 @@ describe("ClaudeAdapterLive", () => {
         lastUsedTokens: 23117,
         totalProcessedTokens: 112150,
         inputTokens: 22721,
+        cachedInputTokens: 19456,
         outputTokens: 396,
         maxTokens: 1000000,
       });
@@ -3771,6 +3773,7 @@ describe("ClaudeAdapterLive", () => {
           lastUsedTokens: 1620,
           totalProcessedTokens: 1800,
           inputTokens: 1500,
+          cachedInputTokens: 600,
           outputTokens: 120,
           maxTokens: 200000,
         });
@@ -3912,6 +3915,7 @@ describe("ClaudeAdapterLive", () => {
             usedTokens: 2100,
             lastUsedTokens: 2100,
             inputTokens: 2000,
+            cachedInputTokens: 1500,
             outputTokens: 100,
             maxTokens: 200000,
           });
@@ -5498,6 +5502,7 @@ describe("ClaudeAdapterLive", () => {
             usedTokens: 24542,
             lastUsedTokens: 24542,
             inputTokens: 23863,
+            cachedInputTokens: 21144,
             outputTokens: 679,
             maxTokens: 200000,
           },

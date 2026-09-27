@@ -1795,6 +1795,74 @@ describe("deriveMessagesTimelineRows", () => {
     ).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
+  it("renders tool groups expanded when expandAllToolGroups is set", () => {
+    const turnId = "turn-1" as never;
+    const timelineEntries = [
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "I could not finish the task.",
+          turnId,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `work-entry-expand-${index}`,
+        kind: "work" as const,
+        createdAt: `2026-01-01T00:00:0${index + 3}Z`,
+        entry: {
+          id: `work-expand-${index}`,
+          createdAt: `2026-01-01T00:00:0${index + 3}Z`,
+          turnId,
+          label: "Ran command",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          toolLifecycleStatus: "completed" as const,
+        },
+      })),
+    ];
+
+    const input = {
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "error" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:10Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    // Baseline: collapsed summary row ("Ran 3 commands") after the assistant.
+    const collapsed = deriveMessagesTimelineRows(input);
+    const collapsedIds = collapsed.map((row) => row.id);
+    const collapsedToggle = collapsedIds.findIndex(
+      (id) => id === "work-toggle:work-entry-expand-0",
+    );
+    expect(collapsedToggle).toBeGreaterThanOrEqual(0);
+    expect(collapsedIds).not.toContain("work-group:work-entry-expand-0:details");
+
+    // Expanded: the group toggle stays (still collapsible) and the details
+    // row follows it, listing every tool call.
+    const expanded = deriveMessagesTimelineRows({ ...input, expandAllToolGroups: true });
+    const expandedIds = expanded.map((row) => row.id);
+    const expandedToggle = expandedIds.findIndex((id) => id === "work-toggle:work-entry-expand-0");
+    expect(expandedToggle).toBeGreaterThanOrEqual(0);
+    expect(expandedIds[expandedToggle + 1]).toBe("work-group:work-entry-expand-0:details");
+    const detailsRow = expanded.find((row) => row.kind === "work");
+    expect(detailsRow).toMatchObject({ isExpandedToolGroup: true });
+    expect(detailsRow?.groupedEntries).toHaveLength(3);
+  });
+
   it("folds all assistant messages before the terminal message", () => {
     const timelineEntries = [
       {
@@ -1850,6 +1918,70 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+  });
+
+  it("keeps settled turns unfolded when expandAllToolGroups is set", () => {
+    const timelineEntries = [
+      {
+        id: "assistant-first-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-first" as never,
+          role: "assistant" as const,
+          text: "The main result is ready.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-middle-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        message: {
+          id: "assistant-middle" as never,
+          role: "assistant" as const,
+          text: "I am checking one more detail.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:03Z",
+          updatedAt: "2026-01-01T00:00:04Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Verification finished.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:06Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const input = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    const rows = deriveMessagesTimelineRows({ ...input, expandAllToolGroups: true });
+
+    // No "Worked for ..." fold: every settled entry stays a visible row.
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-first-entry",
+      "assistant-middle-entry",
+      "assistant-final-entry",
+    ]);
   });
 
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {

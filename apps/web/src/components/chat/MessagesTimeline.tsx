@@ -415,6 +415,8 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
+  /** Local-only: render every tool group expanded (one row per tool call). */
+  expandAllToolGroups?: boolean;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
@@ -483,6 +485,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   timestampFormat,
+  expandAllToolGroups = false,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   anchorMessageId,
@@ -724,6 +727,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         liveAgentTaskIds,
         worktreeSetup,
         queuedMessages,
+        expandAllToolGroups,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
         ? previous.projection
@@ -747,6 +751,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     liveAgentTaskIds,
     worktreeSetup,
     queuedMessages,
+    expandAllToolGroups,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -4171,8 +4176,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   const { threadRef, onImageExpand } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
+  // Local patch: entries inside an expanded tool group open with their
+  // contents visible, so the expand-all setting surfaces the full detail
+  // without a second click per row.
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () => (groupView?.state.expandedEntries.has(workEntry.id) ?? false) || isExpandedToolGroupEntry,
   );
   const toggleExpanded = () => {
     const next = !expanded;

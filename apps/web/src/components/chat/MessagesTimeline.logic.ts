@@ -312,6 +312,18 @@ export type TimelineLatestTurn = Pick<
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
+type ActivityEntry = Extract<TimelineEntry, { kind: "message" | "work" }>;
+
+function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
+  return entry.kind === "message"
+    ? entry.message.role === "reasoning"
+    : entry.kind === "work" &&
+        entry.entry.agentSpawn === undefined &&
+        entry.entry.questionAnswer === undefined &&
+        entry.entry.sourceActivityKind !== "context-compaction" &&
+        entry.entry.tone !== "error";
+}
+
 export type MessagesTimelineRow =
   | {
       kind: "work";
@@ -599,7 +611,15 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unfoldedTurnIds: ReadonlySet<TurnId>;
+  /**
+   * Local patch: the expand-all setting keeps every settled turn unfolded —
+   * no "Worked for ..." row hiding mid-turn outputs.
+   */
+  unfoldAllTurns?: boolean;
 }): ReadonlyMap<string, TurnFold> {
+  if (input.unfoldAllTurns === true) {
+    return new Map();
+  }
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
@@ -883,6 +903,13 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   /** Messages sent during the running turn, rendered after the live rows. */
   queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
+  /**
+   * Local-only: when on, tool groups render expanded by default (one row per
+   * tool call, each with its own detail expansion) and settled turns stay
+   * unfolded — no "Worked for ..." fold hiding mid-turn outputs. The
+   * per-group toggle still collapses any group the user closed.
+   */
+  expandAllToolGroups?: boolean;
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
@@ -917,6 +944,7 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unfoldedTurnIds: activeVisualResponseTurnIds,
+    unfoldAllTurns: input.expandAllToolGroups === true,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -995,7 +1023,8 @@ export function deriveMessagesTimelineRows(input: {
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded:
+              input.expandedWorkGroupIds?.has(groupId) ?? input.expandAllToolGroups === true,
             active: latestToolKeepsActivityLive,
           };
         })()
@@ -1032,6 +1061,7 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  let scannedActivityThrough = -1;
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
@@ -1060,6 +1090,50 @@ export function deriveMessagesTimelineRows(input: {
 
     if (collapsedEntryIds.has(timelineEntry.id)) {
       continue;
+    }
+
+    const activityTurnId = timelineEntryTurnId(timelineEntry);
+    if (index > scannedActivityThrough && activityTurnId && isActivityEntry(timelineEntry)) {
+      const entries = [timelineEntry];
+      let cursor = index + 1;
+      while (cursor < input.timelineEntries.length) {
+        const next = input.timelineEntries[cursor]!;
+        if (
+          !isActivityEntry(next) ||
+          timelineEntryTurnId(next) !== activityTurnId ||
+          collapsedEntryIds.has(next.id) ||
+          foldsByAnchorEntryId.has(next.id)
+        )
+          break;
+        entries.push(next);
+        cursor += 1;
+      }
+      scannedActivityThrough = cursor - 1;
+      if (entries.some((entry) => entry.kind === "message")) {
+        const active =
+          input.isWorking &&
+          activityTurnId === unsettledTurnId &&
+          cursor === input.timelineEntries.length &&
+          !latestToolFailed &&
+          (latestVisibleToolEntry === undefined || latestToolKeepsActivityLive);
+        const groupId =
+          timelineEntry.kind === "work"
+            ? workGroupId(timelineEntry.id, timelineEntry.entry)
+            : `activity-group:${timelineEntry.id}`;
+        nextRows.push({
+          kind: "activity-group",
+          id: active ? LIVE_ACTIVITY_ROW_ID : groupId,
+          createdAt: timelineEntry.createdAt,
+          turnId: activityTurnId,
+          groupId,
+          entries,
+          expanded: input.expandedWorkGroupIds?.has(groupId) ?? input.expandAllToolGroups === true,
+          active,
+        });
+        hasActivityRow ||= active;
+        index = cursor - 1;
+        continue;
+      }
     }
 
     if (activeWorkEntryIds.has(timelineEntry.id)) {
@@ -1130,7 +1204,8 @@ export function deriveMessagesTimelineRows(input: {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            input.expandedWorkGroupIds?.has(groupId) ?? input.expandAllToolGroups === true;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
@@ -1166,7 +1241,8 @@ export function deriveMessagesTimelineRows(input: {
           });
         } else {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            input.expandedWorkGroupIds?.has(groupId) ?? input.expandAllToolGroups === true;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
