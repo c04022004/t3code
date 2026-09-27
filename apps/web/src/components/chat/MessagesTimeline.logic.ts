@@ -312,6 +312,18 @@ export type TimelineLatestTurn = Pick<
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
+type ActivityEntry = Extract<TimelineEntry, { kind: "message" | "work" }>;
+
+function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
+  return entry.kind === "message"
+    ? entry.message.role === "reasoning"
+    : entry.kind === "work" &&
+        entry.entry.agentSpawn === undefined &&
+        entry.entry.questionAnswer === undefined &&
+        entry.entry.sourceActivityKind !== "context-compaction" &&
+        entry.entry.tone !== "error";
+}
+
 export type MessagesTimelineRow =
   | {
       kind: "work";
@@ -599,7 +611,15 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unfoldedTurnIds: ReadonlySet<TurnId>;
+  /**
+   * Local patch: the expand-all setting keeps every settled turn unfolded —
+   * no "Worked for ..." row hiding mid-turn outputs.
+   */
+  unfoldAllTurns?: boolean;
 }): ReadonlyMap<string, TurnFold> {
+  if (input.unfoldAllTurns === true) {
+    return new Map();
+  }
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
@@ -885,8 +905,9 @@ export function deriveMessagesTimelineRows(input: {
   queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
   /**
    * Local-only: when on, tool groups render expanded by default (one row per
-   * tool call, each with its own detail expansion). The per-group toggle
-   * still collapses any group the user closed.
+   * tool call, each with its own detail expansion) and settled turns stay
+   * unfolded — no "Worked for ..." fold hiding mid-turn outputs. The
+   * per-group toggle still collapses any group the user closed.
    */
   expandAllToolGroups?: boolean;
 }): MessagesTimelineRow[] {
@@ -923,6 +944,7 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unfoldedTurnIds: activeVisualResponseTurnIds,
+    unfoldAllTurns: input.expandAllToolGroups === true,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1039,6 +1061,7 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  let scannedActivityThrough = -1;
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
