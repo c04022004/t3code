@@ -36,8 +36,8 @@ export function ContextWindowMeter(props: {
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
   const cacheHitLabel = formatContextWindowCacheHit(
     contextWindowCacheHitRatio({
-      cachedInputTokens: usage.cachedInputTokens,
-      inputTokens: usage.inputTokens,
+      cachedInputTokens: usage.cachedInputTokens ?? null,
+      inputTokens: usage.inputTokens ?? null,
     }),
   );
   const isOverloaded = normalizedPercentage > 90;
