@@ -187,6 +187,8 @@ export interface AgentSessionListedThread {
   readonly thread: AgentSessionThread;
   readonly source: AgentSessionImportSource;
   readonly alreadyImported: boolean;
+  /** Imported but the transcript changed on disk since the import. */
+  readonly stale: boolean;
 }
 
 /** Service tag for agent session discovery. */
@@ -1602,6 +1604,8 @@ export const make = Effect.gen(function* () {
           const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
           if (seenSessions.has(sessionKey)) return;
           seenSessions.add(sessionKey);
+          const recordedSource = completedBySession.get(sessionKey);
+          const alreadyImported = recordedSource !== undefined;
           listed.push({
             thread: parsedThread,
             source: {
@@ -1610,7 +1614,9 @@ export const make = Effect.gen(function* () {
               providerInstanceId: parsedThread.providerInstanceId,
               providerSessionId: parsedThread.providerSessionId,
             },
-            alreadyImported: completedBySession.has(sessionKey),
+            alreadyImported,
+            stale:
+              alreadyImported && !sameTranscriptIdentity(recordedSource, identity) ? true : false,
           });
         }),
       ),
