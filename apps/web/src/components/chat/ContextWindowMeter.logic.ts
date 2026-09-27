@@ -110,6 +110,34 @@ export function formatContextWindowCompactionMessage(
 }
 
 /**
+ * Prompt-cache hit ratio for the latest per-request usage: cached input
+ * tokens over total input tokens (uncached + cached), 0..1. Null when there
+ * is no input evidence (first turn, provider reports no cache counters) or
+ * the counts disagree with the totals.
+ *
+ * Mirrors the user's CLI statusline `.prompt_cache.hit_ratio` segment: the
+ * cached share of the last request's prompt, not a turn-wide average.
+ */
+export function contextWindowCacheHitRatio(input: {
+  readonly cachedInputTokens: number | null;
+  readonly inputTokens: number | null;
+}): number | null {
+  const cached = input.cachedInputTokens;
+  const total = input.inputTokens;
+  if (cached === null || total === null || total <= 0 || cached < 0 || cached > total) {
+    return null;
+  }
+  return cached / total;
+}
+
+export function formatContextWindowCacheHit(ratio: number | null): string | null {
+  if (ratio === null) return null;
+  const percent = ratio * 100;
+  if (percent <= 0) return null;
+  return `${percent < 10 ? percent.toFixed(1).replace(/\.0$/, "") : Math.round(percent)}%`;
+}
+
+/**
  * Whether the footer should hold the meter's slot before a snapshot exists.
  *
  * The snapshot comes from thread activities, which load after the shell.

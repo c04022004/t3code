@@ -2,6 +2,8 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  contextWindowCacheHitRatio,
+  formatContextWindowCacheHit,
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
@@ -284,5 +286,47 @@ describe("shouldReserveContextWindowMeter", () => {
     expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, meterEnabled: false })).toBe(
       false,
     );
+  });
+});
+
+describe("contextWindowCacheHitRatio", () => {
+  it("computes cached over total input tokens", () => {
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: 8000, inputTokens: 10000 })).toBeCloseTo(
+      0.8,
+    );
+  });
+
+  it("returns null without input evidence", () => {
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: null, inputTokens: null })).toBeNull();
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: 500, inputTokens: null })).toBeNull();
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: null, inputTokens: 500 })).toBeNull();
+  });
+
+  it("returns null when the total is zero or the counts disagree", () => {
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: 0, inputTokens: 0 })).toBeNull();
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: -1, inputTokens: 100 })).toBeNull();
+    // Cached larger than total means the fields come from different
+    // request generations; showing a ratio would be a lie.
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: 200, inputTokens: 100 })).toBeNull();
+  });
+
+  it("accepts a fully cached prompt", () => {
+    expect(contextWindowCacheHitRatio({ cachedInputTokens: 100, inputTokens: 100 })).toBeCloseTo(1);
+  });
+});
+
+describe("formatContextWindowCacheHit", () => {
+  it("formats ratios as percentages", () => {
+    expect(formatContextWindowCacheHit(0.8)).toBe("80%");
+    expect(formatContextWindowCacheHit(0.955)).toBe("96%");
+  });
+
+  it("keeps one decimal under 10%", () => {
+    expect(formatContextWindowCacheHit(0.083)).toBe("8.3%");
+  });
+
+  it("returns null for absent evidence and zero hits", () => {
+    expect(formatContextWindowCacheHit(null)).toBeNull();
+    expect(formatContextWindowCacheHit(0)).toBeNull();
   });
 });
