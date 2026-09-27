@@ -37,3 +37,9 @@ export const agentSessionImportSessions = createEnvironmentRpcCommand(connection
   label: "environment-data:agent-sessions:import-sessions",
   tag: WS_METHODS.agentSessionsImportSessions,
 });
+
+/** Sync state of one imported thread, for the right-click "bring up to date" action. */
+export const agentSessionThreadSync = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:thread-sync",
+  tag: WS_METHODS.agentSessionsThreadSync,
+});
