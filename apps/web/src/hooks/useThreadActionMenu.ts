@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
@@ -18,6 +19,7 @@ import {
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
+import { agentSessionImportSessions, agentSessionThreadSync } from "../state/agentSessions";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   readEnvironmentSupportsPinning,
@@ -94,6 +96,8 @@ export function useThreadActionMenu(input: {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const threadSyncQuery = useAtomCommand(agentSessionThreadSync, { reportFailure: false });
+  const importThreads = useAtomCommand(agentSessionImportSessions, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -118,6 +122,22 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy thread ID", error),
   });
+  // Local-only agent history import: ask the server whether this imported
+  // thread's transcript moved since the import. Non-imported threads resolve
+  // to null so the menu omits the item entirely.
+  const queryImportedHistorySync = useCallback(
+    async (thread: { id: string; projectId: string }) => {
+      const environmentId = threadRef?.environmentId ?? primaryEnvironmentId;
+      if (environmentId === null) return null;
+      const result = await threadSyncQuery({
+        environmentId,
+        input: { threadId: thread.id as ThreadId },
+      });
+      if (result._tag !== "Success") return null;
+      return result.value.imported ? { stale: result.value.stale } : null;
+    },
+    [primaryEnvironmentId, threadRef, threadSyncQuery],
+  );
 
   const openMenu = useCallback(
     (position: { x: number; y: number }) => {
@@ -138,6 +158,10 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        // Local-only: imported threads can refresh their provider transcript.
+        const importedHistorySync = thread.id.startsWith("import:")
+          ? await queryImportedHistorySync(thread)
+          : null;
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -146,6 +170,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          importedHistorySync,
           supports,
           snoozePresets,
         });
@@ -194,6 +219,41 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "sync-imported-history": {
+            const parts = thread.id.match(/^import:([^:]+):(.+)$/);
+            if (parts === null) return;
+            const result = await importThreads({
+              environmentId: threadRef.environmentId,
+              input: {
+                projectId: thread.projectId,
+                sessions: [
+                  {
+                    providerInstanceId: parts[1]! as ProviderInstanceId,
+                    providerSessionId: parts[2]!,
+                  },
+                ],
+              },
+            });
+            if (result._tag === "Failure") {
+              if (!isAtomCommandInterrupted(result)) {
+                failureToast(
+                  "Could not bring history up to date",
+                  squashAtomCommandFailure(result),
+                );
+              }
+              return;
+            }
+            if (result.value.importedCount > 0) {
+              toastManager.add({
+                type: "success",
+                title: "History updated",
+                description: "The thread now shows the session's latest transcript.",
+              });
+            } else {
+              toastManager.add({ type: "success", title: "History already up to date" });
+            }
+            return;
+          }
           case "project-settings": {
             const project = projects.find(
               (candidate) =>
@@ -342,17 +402,21 @@ export function useThreadActionMenu(input: {
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      importThreads,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,
       pinThread,
+      primaryEnvironmentId,
       projectCwd,
       projectGroupingSettings,
       projects,
+      queryImportedHistorySync,
       router,
       settleThread,
       snoozeThread,
       threadRef,
+      threadSyncQuery,
       timestampFormat,
       unsettleThread,
       unsnoozeThread,

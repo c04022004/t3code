@@ -31,8 +31,10 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   resolveEnvironmentMachineKind,
+  type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectIconOverride,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -133,6 +135,7 @@ import {
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
+import { agentSessionImportSessions, agentSessionThreadSync } from "../state/agentSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -2154,6 +2157,8 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const threadSyncQuery = useAtomCommand(agentSessionThreadSync, { reportFailure: false });
+  const importThreads = useAtomCommand(agentSessionImportSessions, { reportFailure: false });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -3089,6 +3094,71 @@ export default function Sidebar() {
       })();
     },
     [unsettleThread],
+  );
+  // Local-only agent history import: ask the server whether this imported
+  // thread's transcript moved since the import. Non-imported threads short
+  // circuit to null so the menu omits the item entirely.
+  const queryImportedHistorySync = useCallback(
+    async (thread: { id: string; environmentId: EnvironmentId }) => {
+      const result = await threadSyncQuery({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id as ThreadId },
+      });
+      if (result._tag !== "Success") return null;
+      return result.value.imported ? { stale: result.value.stale } : null;
+    },
+    [threadSyncQuery],
+  );
+  // Replace the thread's imported history with the provider session's current
+  // transcript (the same replace path the settings picker uses).
+  const attemptSyncImportedHistory = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      void (async () => {
+        const threadKey = scopedThreadKey(threadRef);
+        const thread = threadByKeyRef.current.get(threadKey);
+        if (!thread) return;
+        const parts = thread.id.match(/^import:([^:]+):(.+)$/);
+        if (parts === null) return;
+        const result = await importThreads({
+          environmentId: thread.environmentId,
+          input: {
+            projectId: thread.projectId,
+            sessions: [
+              {
+                providerInstanceId: parts[1]! as ProviderInstanceId,
+                providerSessionId: parts[2]!,
+              },
+            ],
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not bring history up to date",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+        if (result.value.importedCount > 0) {
+          toastManager.add({
+            type: "success",
+            title: "History updated",
+            description: "The thread now shows the session's latest transcript.",
+          });
+        } else {
+          toastManager.add({
+            type: "info" as const,
+            title: "History already up to date",
+          });
+        }
+      })();
+    },
+    [importThreads],
   );
   const attemptUnsnooze = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -4040,6 +4110,11 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        // Local-only: imported threads can refresh their provider transcript.
+        // Resolved at menu-open like every other piece of menu state.
+        const importedHistorySync = thread.id.startsWith("import:")
+          ? await queryImportedHistorySync(thread)
+          : null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -4051,6 +4126,7 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
+              importedHistorySync,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
@@ -4111,6 +4187,9 @@ export default function Sidebar() {
             return;
           case "unsettle":
             attemptUnsettle(threadRef);
+            return;
+          case "sync-imported-history":
+            attemptSyncImportedHistory(threadRef);
             return;
           case "unsnooze":
             attemptUnsnooze(threadRef);

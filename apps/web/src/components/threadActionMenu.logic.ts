@@ -19,6 +19,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "sync-imported-history"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -35,6 +36,11 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /**
+   * Local-only agent history sync: null hides the item (not an imported
+   * thread), `false` greys it out (transcript unchanged), `true` enables it.
+   */
+  readonly importedHistorySync: { readonly stale: boolean } | null;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -106,6 +112,20 @@ export function buildThreadActionMenuItems(
             label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
             icon: "refresh-cw",
             disabled: state.isRegeneratingTitle,
+          },
+        ]
+      : []),
+    // Local-only: imported threads replay their provider transcript; offer to
+    // refresh it when the session moved on, greyed out when it is current.
+    ...(state.importedHistorySync !== null
+      ? [
+          {
+            id: "sync-imported-history" as const,
+            label: state.importedHistorySync.stale
+              ? "Bring history up to date"
+              : "History up to date",
+            icon: "history",
+            disabled: !state.importedHistorySync.stale,
           },
         ]
       : []),

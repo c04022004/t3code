@@ -16,12 +16,16 @@ import {
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type AgentSessionImportSessionsInput,
+  type AgentSessionThreadSyncInput,
+  type AgentSessionThreadSyncResult,
+  type AgentSessionImportSource,
   type OrchestrationThread,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -458,3 +462,60 @@ export const importAgentSessionsById = Effect.fn("importAgentSessionsById")(func
     ...(updatedThreadIds.size > 0 ? { updatedCount: updatedThreadIds.size } : {}),
   } satisfies AgentSessionImportResult;
 });
+
+/**
+ * Whether an imported thread's transcript moved on disk since the import.
+ * Compares the recorded source file identities against fresh stats, so a
+ * right-click menu can gate the "bring up to date" action without reparsing
+ * any transcript.
+ */
+export const getImportedThreadSyncState = Effect.fn("getImportedThreadSyncState")(function* (
+  input: AgentSessionThreadSyncInput,
+) {
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const threadId = input.threadId;
+  if (!threadId.startsWith("import:")) {
+    return { imported: false, stale: false } satisfies AgentSessionThreadSyncResult;
+  }
+  const threadShell = yield* snapshots
+    .getThreadShellById(threadId)
+    .pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+    );
+  if (Option.isNone(threadShell)) {
+    // The thread may have been deleted by the user; nothing to sync.
+    return { imported: false, stale: false } satisfies AgentSessionThreadSyncResult;
+  }
+  const recorded = yield* snapshots
+    .getImportedAgentSessionSources(threadShell.value.projectId)
+    .pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+    );
+  const sources = recorded
+    .filter((entry) => entry.threadId === threadId)
+    .map((entry) => entry.source);
+  if (sources.length === 0) {
+    return { imported: true, stale: false } satisfies AgentSessionThreadSyncResult;
+  }
+  const stale = yield* Effect.forEach(sources, (source) =>
+    fileSystem.stat(source.filePath).pipe(
+      Effect.option,
+      Effect.map(
+        (statsOption) =>
+          Option.isSome(statsOption) && !sameRecordedIdentity(source, statsOption.value),
+      ),
+    ),
+  ).pipe(Effect.map((results) => results.some(Boolean)));
+  return { imported: true, stale } satisfies AgentSessionThreadSyncResult;
+});
+
+/** Identity fields a recorded import source must match against the live file. */
+function sameRecordedIdentity(
+  source: AgentSessionImportSource,
+  stats: FileSystem.File.Info,
+): boolean {
+  const mtimeMs = Option.getOrNull(stats.mtime);
+  const inode = Option.getOrNull(stats.ino);
+  return Number(stats.size) === source.size && mtimeMs === source.mtimeMs && inode === source.inode;
+}
