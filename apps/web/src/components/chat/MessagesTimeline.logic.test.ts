@@ -1920,6 +1920,70 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
+  it("keeps settled turns unfolded when expandAllToolGroups is set", () => {
+    const timelineEntries = [
+      {
+        id: "assistant-first-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-first" as never,
+          role: "assistant" as const,
+          text: "The main result is ready.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-middle-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        message: {
+          id: "assistant-middle" as never,
+          role: "assistant" as const,
+          text: "I am checking one more detail.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:03Z",
+          updatedAt: "2026-01-01T00:00:04Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Verification finished.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:06Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const input = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    const rows = deriveMessagesTimelineRows({ ...input, expandAllToolGroups: true });
+
+    // No "Worked for ..." fold: every settled entry stays a visible row.
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-first-entry",
+      "assistant-middle-entry",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The
