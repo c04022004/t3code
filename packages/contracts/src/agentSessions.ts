@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
@@ -159,6 +165,20 @@ export const AgentSessionImportSessionsInput = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["auto", "fresh"])),
 });
 export type AgentSessionImportSessionsInput = typeof AgentSessionImportSessionsInput.Type;
+
+export const AgentSessionThreadSyncInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type AgentSessionThreadSyncInput = typeof AgentSessionThreadSyncInput.Type;
+
+/** Sync state of one imported thread's transcript. */
+export const AgentSessionThreadSyncResult = Schema.Struct({
+  /** The thread was created by an agent-session import. */
+  imported: Schema.Boolean,
+  /** The transcript changed on disk since the import; history can be refreshed. */
+  stale: Schema.Boolean,
+});
+export type AgentSessionThreadSyncResult = typeof AgentSessionThreadSyncResult.Type;
 
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",

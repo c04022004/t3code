@@ -148,6 +148,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import {
+  getImportedThreadSyncState,
   importAgentSessionsById,
   importRecentAgentThreads,
 } from "./project/AgentSessionImporter.ts";
@@ -631,6 +632,7 @@ const makeWsRpcLayer = (
         | ServerConfig.ServerConfig
         | WorkspacePaths.WorkspacePaths
       >();
+      const fileSystem = yield* FileSystem.FileSystem;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       // The agent-session importers take their collaborators explicitly; every
       // handler below shares one fully-provided pipeline.
@@ -639,6 +641,7 @@ const makeWsRpcLayer = (
         | OrchestrationEngine.OrchestrationEngineService
         | ProjectionSnapshotQuery.ProjectionSnapshotQuery
         | Crypto.Crypto
+        | FileSystem.FileSystem
         | ProviderSessionDirectory.ProviderSessionDirectory;
       const provideAgentSessionImportServices = <A, E>(
         effect: Effect.Effect<A, E, AgentSessionImportServices>,
@@ -654,6 +657,7 @@ const makeWsRpcLayer = (
             projectionSnapshotQuery,
           ),
           Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(
             ProviderSessionDirectory.ProviderSessionDirectory,
             providerSessionDirectory,
@@ -3154,6 +3158,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentSessionsImportSessions,
             provideAgentSessionImportServices(importAgentSessionsById(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsThreadSync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsThreadSync,
+            provideAgentSessionImportServices(getImportedThreadSyncState(input)),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
