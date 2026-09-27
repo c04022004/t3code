@@ -10,6 +10,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  importedHistorySync: null,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -105,5 +106,26 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("shows the history sync item only for imported threads", () => {
+    expect(ids(baseState)).not.toContain("sync-imported-history");
+    expect(ids({ ...baseState, importedHistorySync: { stale: true } })).toContain(
+      "sync-imported-history",
+    );
+  });
+
+  it("greys out history sync until the transcript is stale", () => {
+    const current = buildThreadActionMenuItems({
+      ...baseState,
+      importedHistorySync: { stale: false },
+    }).find((item) => item.id === "sync-imported-history");
+    expect(current?.disabled).toBe(true);
+    const stale = buildThreadActionMenuItems({
+      ...baseState,
+      importedHistorySync: { stale: true },
+    }).find((item) => item.id === "sync-imported-history");
+    expect(stale?.disabled).toBe(false);
+    expect(stale?.label).toBe("Bring history up to date");
   });
 });

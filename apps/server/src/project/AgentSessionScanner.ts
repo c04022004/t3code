@@ -178,6 +178,19 @@ export type AgentSessionRecentThread =
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Skipped" };
 
+/**
+ * A parsed transcript for the per-session picker. Unlike `AgentSessionRecentThread`
+ * this carries every parsed thread (including ones already imported) so the
+ * client can show titles and mark sessions it should not import twice.
+ */
+export interface AgentSessionListedThread {
+  readonly thread: AgentSessionThread;
+  readonly source: AgentSessionImportSource;
+  readonly alreadyImported: boolean;
+  /** Imported but the transcript changed on disk since the import. */
+  readonly stale: boolean;
+}
+
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -193,6 +206,16 @@ export class AgentSessionScanner extends Context.Service<
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    /**
+     * Parse every session transcript that belongs to a workspace root, with no
+     * recency window. Newest first, deduplicated by provider session. Backs the
+     * local per-session import picker; the importer still enforces its own
+     * budgets at import time.
+     */
+    readonly listSessionThreads: (
+      workspaceRoot: string,
+      completedSources?: ReadonlyArray<AgentSessionImportSource>,
+    ) => Effect.Effect<ReadonlyArray<AgentSessionListedThread>, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -1489,7 +1512,120 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  /**
+   * Enumerate every session of a workspace root for the per-session picker.
+   * Mirrors `prepareRecentThreads` without the 30-day window and the import
+   * budget caps — the picker needs titles for old sessions too, and the
+   * importer applies its own budgets to exactly the sessions the user chose.
+   */
+  const listSessionThreads: AgentSessionScanner["Service"]["listSessionThreads"] = Effect.fn(
+    "AgentSessionScanner.listSessionThreads",
+  )(function* (workspaceRoot, completedSources = []) {
+    const root = path.resolve(expandHomePath(workspaceRoot));
+    const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
+    if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return [];
+
+    const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
+    cachedCandidates = candidates;
+    const rootIdentity = yield* directoryIdentity(root);
+
+    const eligibleTranscripts: Array<{
+      readonly candidate: RawCandidate;
+      readonly transcript: RawCandidate["transcripts"][number] & { readonly mtimeMs: number };
+    }> = [];
+    for (const candidate of candidates) {
+      const expanded = expandHomePath(candidate.cwd.trim());
+      if (!path.isAbsolute(expanded)) continue;
+      const resolved = path.resolve(expanded);
+      if ((yield* directoryIdentity(resolved)) !== rootIdentity) continue;
+
+      for (const transcript of candidate.transcripts) {
+        if (transcript.mtimeMs === null) continue;
+        eligibleTranscripts.push({
+          candidate,
+          transcript: { ...transcript, mtimeMs: transcript.mtimeMs },
+        });
+      }
+    }
+
+    eligibleTranscripts.sort((left, right) => {
+      if (left.transcript.mtimeMs !== right.transcript.mtimeMs) {
+        return right.transcript.mtimeMs - left.transcript.mtimeMs;
+      }
+      return left.transcript.filePath.localeCompare(right.transcript.filePath);
+    });
+
+    const completedBySession = new Map<string, AgentSessionImportSource>();
+    for (const source of completedSources) {
+      completedBySession.set(`${source.providerInstanceId}\0${source.providerSessionId}`, source);
+    }
+
+    const listed: Array<AgentSessionListedThread> = [];
+    const seenSessions = new Set<string>();
+    yield* Effect.forEach(eligibleTranscripts, ({ candidate, transcript }) =>
+      importReadLock.withPermits(1)(
+        Effect.gen(function* () {
+          const stats = yield* statOption(transcript.filePath);
+          if (Option.isNone(stats) || stats.value.type !== "File") return;
+          const identity = transcriptIdentity(transcript.filePath, stats.value);
+          const snapshot = yield* readTranscript(
+            transcript.filePath,
+            identity,
+            MAX_IMPORT_RECORDS,
+            candidate.source,
+          );
+          if (snapshot === null) return;
+
+          let snapshotCwd: string | null = null;
+          for (const record of snapshot.records) {
+            snapshotCwd = extractDecodedCwd(record);
+            if (snapshotCwd !== null) break;
+          }
+          if (snapshotCwd === null) return;
+          const expandedCwd = expandHomePath(snapshotCwd.trim());
+          if (
+            !path.isAbsolute(expandedCwd) ||
+            (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
+          ) {
+            return;
+          }
+
+          const parsedThread = parseAgentSessionRecords(
+            {
+              source: candidate.source,
+              providerInstanceId: candidate.providerInstanceId,
+              fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
+              lastActiveAtMs: transcript.mtimeMs,
+            },
+            snapshot.records,
+          );
+          if (parsedThread === null) return;
+
+          const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
+          if (seenSessions.has(sessionKey)) return;
+          seenSessions.add(sessionKey);
+          const recordedSource = completedBySession.get(sessionKey);
+          const alreadyImported = recordedSource !== undefined;
+          listed.push({
+            thread: parsedThread,
+            source: {
+              ...identity,
+              provider: parsedThread.source,
+              providerInstanceId: parsedThread.providerInstanceId,
+              providerSessionId: parsedThread.providerSessionId,
+            },
+            alreadyImported,
+            stale:
+              alreadyImported && !sameTranscriptIdentity(recordedSource, identity) ? true : false,
+          });
+        }),
+      ),
+    );
+
+    return listed;
+  });
+
+  return AgentSessionScanner.of({ scan, recentThreads, listSessionThreads });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make);

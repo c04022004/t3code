@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
@@ -100,8 +106,79 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  /** Sessions re-imported because their transcript changed on disk. */
+  updatedCount: Schema.optionalKey(NonNegativeInt),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
+
+// ── Local-only granular import ────────────────────────────────────────────
+// The onboarding importer imports every recent session of a project at once.
+// These schemas back a per-session picker: list the individual sessions of a
+// workspace root, then import exactly the ones the user checked.
+
+/** One importable agent session, as shown in the picker. */
+export const AgentSessionSummary = Schema.Struct({
+  provider: AgentSessionSource,
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  model: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  messageCount: NonNegativeInt,
+  /** Marks sessions whose transcript already landed in this project. */
+  alreadyImported: Schema.Boolean,
+  /**
+   * `true` when an imported transcript changed on disk since its import, so
+   * the imported thread no longer shows the session's latest history.
+   * Absent when the session is not imported.
+   */
+  stale: Schema.optionalKey(Schema.Boolean),
+});
+export type AgentSessionSummary = typeof AgentSessionSummary.Type;
+
+export const AgentSessionListSessionsInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+});
+export type AgentSessionListSessionsInput = typeof AgentSessionListSessionsInput.Type;
+
+export const AgentSessionListSessionsResult = Schema.Struct({
+  sessions: Schema.Array(AgentSessionSummary),
+});
+export type AgentSessionListSessionsResult = typeof AgentSessionListSessionsResult.Type;
+
+export const AgentSessionImportSessionsInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  sessions: Schema.Array(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      providerSessionId: TrimmedNonEmptyString,
+    }),
+  ),
+  /**
+   * `auto` (default) imports new sessions, replaces selected sessions whose
+   * transcript changed since their import, and skips up-to-date ones.
+   * `fresh` leaves every imported session untouched.
+   */
+  mode: Schema.optional(Schema.Literals(["auto", "fresh"])),
+});
+export type AgentSessionImportSessionsInput = typeof AgentSessionImportSessionsInput.Type;
+
+export const AgentSessionThreadSyncInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type AgentSessionThreadSyncInput = typeof AgentSessionThreadSyncInput.Type;
+
+/** Sync state of one imported thread's transcript. */
+export const AgentSessionThreadSyncResult = Schema.Struct({
+  /** The thread was created by an agent-session import. */
+  imported: Schema.Boolean,
+  /** The transcript changed on disk since the import; history can be refreshed. */
+  stale: Schema.Boolean,
+});
+export type AgentSessionThreadSyncResult = typeof AgentSessionThreadSyncResult.Type;
 
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",

@@ -68,6 +68,11 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  AgentSessionImportProjectChangedError,
+  AgentSessionImportProjectNotFoundError,
+  AgentSessionListSessionsInput,
+  AgentSessionListSessionsResult,
+  AgentSessionScanError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -81,6 +86,7 @@ import {
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -141,7 +147,11 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
-import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
+import {
+  getImportedThreadSyncState,
+  importAgentSessionsById,
+  importRecentAgentThreads,
+} from "./project/AgentSessionImporter.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -622,7 +632,90 @@ const makeWsRpcLayer = (
         | ServerConfig.ServerConfig
         | WorkspacePaths.WorkspacePaths
       >();
+      const fileSystem = yield* FileSystem.FileSystem;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      // The agent-session importers take their collaborators explicitly; every
+      // handler below shares one fully-provided pipeline.
+      type AgentSessionImportServices =
+        | AgentSessionScanner.AgentSessionScanner
+        | OrchestrationEngine.OrchestrationEngineService
+        | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+        | Crypto.Crypto
+        | FileSystem.FileSystem
+        | ProviderSessionDirectory.ProviderSessionDirectory;
+      const provideAgentSessionImportServices = <A, E>(
+        effect: Effect.Effect<A, E, AgentSessionImportServices>,
+      ): Effect.Effect<A, E, never> =>
+        effect.pipe(
+          Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
+          Effect.provideService(
+            OrchestrationEngine.OrchestrationEngineService,
+            orchestrationEngine,
+          ),
+          Effect.provideService(
+            ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+            projectionSnapshotQuery,
+          ),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            providerSessionDirectory,
+          ),
+        );
+      const listAgentSessionThreads = (input: AgentSessionListSessionsInput) =>
+        Effect.gen(function* () {
+          const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const project = yield* snapshots.getProjectShellById(input.projectId).pipe(
+            Effect.mapError(
+              (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+            ),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    new AgentSessionImportProjectNotFoundError({ projectId: input.projectId }),
+                  ),
+                onSome: Effect.succeed,
+              }),
+            ),
+          );
+          if (
+            input.expectedWorkspaceRoot !== undefined &&
+            normalizeProjectPathForComparison(project.workspaceRoot) !==
+              normalizeProjectPathForComparison(input.expectedWorkspaceRoot)
+          ) {
+            return yield* new AgentSessionImportProjectChangedError({
+              projectId: input.projectId,
+            });
+          }
+          const completedSources = yield* snapshots
+            .getImportedAgentSessionSources(input.projectId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+              ),
+            );
+          const listed = yield* scanner.listSessionThreads(
+            project.workspaceRoot,
+            completedSources.map((entry) => entry.source),
+          );
+          return {
+            sessions: listed.map((entry) => ({
+              provider: entry.thread.source,
+              providerInstanceId: entry.thread.providerInstanceId,
+              providerSessionId: entry.thread.providerSessionId,
+              title: entry.thread.title,
+              model: entry.thread.model,
+              createdAt: entry.thread.createdAt,
+              updatedAt: entry.thread.updatedAt,
+              messageCount: entry.thread.messages.length,
+              alreadyImported: entry.alreadyImported,
+              ...(entry.stale ? { stale: true } : {}),
+            })),
+          } satisfies AgentSessionListSessionsResult;
+        });
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -3052,22 +3145,25 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentSessionsImport,
-            importRecentAgentThreads(input).pipe(
-              Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
-              Effect.provideService(
-                OrchestrationEngine.OrchestrationEngineService,
-                orchestrationEngine,
-              ),
-              Effect.provideService(
-                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                projectionSnapshotQuery,
-              ),
-              Effect.provideService(Crypto.Crypto, crypto),
-              Effect.provideService(
-                ProviderSessionDirectory.ProviderSessionDirectory,
-                providerSessionDirectory,
-              ),
-            ),
+            provideAgentSessionImportServices(importRecentAgentThreads(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsListSessions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsListSessions,
+            provideAgentSessionImportServices(listAgentSessionThreads(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsImportSessions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsImportSessions,
+            provideAgentSessionImportServices(importAgentSessionsById(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsThreadSync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsThreadSync,
+            provideAgentSessionImportServices(getImportedThreadSyncState(input)),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
