@@ -59,6 +59,9 @@ export function AgentSessionImportSettings() {
     selectedKeys.has(sessionKey(session)),
   );
   const importableSelected = selectedSessions.filter((session) => !session.alreadyImported);
+  const staleSelected = selectedSessions.filter(
+    (session) => session.alreadyImported && session.stale === true,
+  );
 
   const load = useCallback(async () => {
     if (target?.projectId == null) return;
@@ -80,50 +83,69 @@ export function AgentSessionImportSettings() {
     }
   }, [listSessions, target]);
 
-  const runImport = useCallback(async () => {
-    if (target?.projectId == null || importableSelected.length === 0) return;
-    setIsImporting(true);
-    setImportResult("");
-    const result: AtomCommandResult<{ importedCount: number; skippedCount: number }, unknown> =
-      await importSessions({
+  const runImport = useCallback(
+    async (mode: "fresh" | "update") => {
+      const targets =
+        mode === "update"
+          ? staleSelected
+          : importableSelected.filter((session) => session.stale !== true);
+      const allTargets =
+        mode === "update"
+          ? [...importableSelected.filter((session) => session.stale !== true), ...staleSelected]
+          : targets;
+      if (target?.projectId == null || allTargets.length === 0) return;
+      setIsImporting(true);
+      setImportResult("");
+      const result: AtomCommandResult<
+        { importedCount: number; skippedCount: number; updatedCount?: number },
+        unknown
+      > = await importSessions({
         environmentId: target.environmentId,
         input: {
           projectId: target.projectId,
-          sessions: importableSelected.map((session) => ({
+          sessions: allTargets.map((session) => ({
             providerInstanceId: session.providerInstanceId,
             providerSessionId: session.providerSessionId,
           })),
+          ...(mode === "update" ? { mode: "update" as const } : {}),
         },
       });
-    setIsImporting(false);
-    if (result._tag === "Success") {
-      const { importedCount, skippedCount } = result.value;
-      setImportResult(
-        importedCount === 0 && skippedCount === 0
-          ? "Nothing to import."
-          : `Imported ${importedCount} ${importedCount === 1 ? "session" : "sessions"}.` +
-              (skippedCount > 0
-                ? ` ${skippedCount} ${skippedCount === 1 ? "session" : "sessions"} could not be imported.`
-                : ""),
-      );
-      toastManager.add({
-        type: "success",
-        title: `Imported ${importedCount} ${importedCount === 1 ? "session" : "sessions"}`,
-      });
-      // Reload so freshly imported sessions flip to their imported badge.
-      void load();
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setImportResult(error instanceof Error ? error.message : "Import failed.");
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not import sessions",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  }, [importableSelected, importSessions, load, target]);
+      setIsImporting(false);
+      if (result._tag === "Success") {
+        const { importedCount, skippedCount, updatedCount } = result.value;
+        const staleNote =
+          updatedCount !== undefined && updatedCount > 0
+            ? ` Updated ${updatedCount} ${updatedCount === 1 ? "session" : "sessions"} with newer history.`
+            : "";
+        setImportResult(
+          importedCount === 0 && skippedCount === 0
+            ? "Nothing to import."
+            : `Imported ${importedCount} ${importedCount === 1 ? "session" : "sessions"}.` +
+                (skippedCount > 0
+                  ? ` ${skippedCount} ${skippedCount === 1 ? "session" : "sessions"} could not be imported.`
+                  : "") +
+                staleNote,
+        );
+        toastManager.add({
+          type: "success",
+          title: `Imported ${importedCount} ${importedCount === 1 ? "session" : "sessions"}`,
+        });
+        // Reload so freshly imported sessions flip to their imported badge.
+        void load();
+      } else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setImportResult(error instanceof Error ? error.message : "Import failed.");
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not import sessions",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [importableSelected, importSessions, load, staleSelected, target],
+  );
 
   if (!isProjectScope || target?.projectId == null) {
     return (
@@ -218,8 +240,14 @@ export function AgentSessionImportSettings() {
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium">{session.title}</span>
                       {session.alreadyImported ? (
-                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          imported
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                            session.stale
+                              ? "bg-warning/15 text-warning"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {session.stale ? "outdated" : "imported"}
                         </span>
                       ) : null}
                     </div>
@@ -233,19 +261,36 @@ export function AgentSessionImportSettings() {
             })}
           </ul>
           <div className="px-4 pb-1">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isImporting || importableSelected.length === 0}
-              onClick={() => void runImport()}
-            >
-              <DownloadIcon className="size-3.5" />
-              {isImporting
-                ? "Importing…"
-                : `Import ${importableSelected.length} selected ${
-                    importableSelected.length === 1 ? "session" : "sessions"
-                  }`}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isImporting || importableSelected.length === 0}
+                onClick={() => void runImport("fresh")}
+              >
+                <DownloadIcon className="size-3.5" />
+                {isImporting
+                  ? "Importing…"
+                  : `Import ${importableSelected.length} selected ${
+                      importableSelected.length === 1 ? "session" : "sessions"
+                    }`}
+              </Button>
+              {staleSelected.length > 0 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isImporting || staleSelected.length === 0}
+                  onClick={() => void runImport("update")}
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                  {isImporting
+                    ? "Updating…"
+                    : `Bring ${staleSelected.length} ${
+                        staleSelected.length === 1 ? "session" : "sessions"
+                      } up to date`}
+                </Button>
+              ) : null}
+            </div>
             {importResult ? (
               <p role="status" className="mt-2 text-sm text-muted-foreground">
                 {importResult}

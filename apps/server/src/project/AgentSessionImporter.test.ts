@@ -1291,11 +1291,13 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             thread: codexThread,
             source: makeThreadOutcome(codexThread).source,
             alreadyImported: false,
+            stale: false,
           },
           {
             thread: claudeThread,
             source: makeThreadOutcome(claudeThread).source,
             alreadyImported: true,
+            stale: true,
           },
         ];
 
@@ -1339,6 +1341,130 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         }).pipe(Effect.flip);
 
         expect(error._tag).toBe("AgentSessionImportProjectChangedError");
+        expect(commands).toEqual([]);
+      }),
+    );
+
+    it.effect("update mode replaces a stale imported thread with fresh history", () =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
+        const claudeThread = makeThread("claudeAgent");
+        const listed: Array<AgentSessionScanner.AgentSessionListedThread> = [
+          {
+            thread: { ...claudeThread, title: "Fresh title" },
+            source: makeThreadOutcome(claudeThread).source,
+            alreadyImported: true,
+            stale: true,
+          },
+        ];
+
+        const result = yield* importAgentSessionsById({
+          projectId: PROJECT_ID,
+          mode: "update",
+          sessions: [
+            {
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              providerSessionId: CLAUDE_SESSION_ID,
+            },
+          ],
+        }).pipe(
+          Effect.provideService(
+            AgentSessionScanner.AgentSessionScanner,
+            AgentSessionScanner.AgentSessionScanner.of({
+              scan: Effect.die("unused"),
+              listSessionThreads: () => Effect.succeed(listed),
+              recentThreads: () => Stream.empty,
+            }),
+          ),
+          Effect.provideService(
+            OrchestrationEngine.OrchestrationEngineService,
+            makeEngine(commands),
+          ),
+          Effect.provideService(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            makeDirectory(bindings),
+          ),
+          Effect.provide(
+            makeSnapshotsLayer({
+              project: makeProject(),
+              // The old incarnation: pure imported history, nothing user-added.
+              getThread: () =>
+                Option.some({
+                  ...makeProjectedThread({ source: "claudeAgent", imported: true }),
+                  // History imports settle the thread on arrival.
+                  settledOverride: "settled" as const,
+                }),
+            }),
+          ),
+        );
+
+        expect(result).toEqual({ importedCount: 1, skippedCount: 0, updatedCount: 1 });
+        // The stale incarnation is torn down before the fresh one replays.
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.delete",
+          "thread.create",
+          "thread.history.import",
+        ]);
+        const historyImport = commands.find((command) => command.type === "thread.history.import");
+        expect(historyImport).toBeDefined();
+      }),
+    );
+
+    it.effect("update mode refuses to replace a thread the user has chatted in", () =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const claudeThread = makeThread("claudeAgent");
+        const listed: Array<AgentSessionScanner.AgentSessionListedThread> = [
+          {
+            thread: claudeThread,
+            source: makeThreadOutcome(claudeThread).source,
+            alreadyImported: true,
+            stale: true,
+          },
+        ];
+        const touchedThread = makeProjectedThread({
+          source: "claudeAgent",
+          imported: true,
+          includeFollowup: true,
+        });
+
+        const result = yield* importAgentSessionsById({
+          projectId: PROJECT_ID,
+          mode: "update",
+          sessions: [
+            {
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              providerSessionId: CLAUDE_SESSION_ID,
+            },
+          ],
+        }).pipe(
+          Effect.provideService(
+            AgentSessionScanner.AgentSessionScanner,
+            AgentSessionScanner.AgentSessionScanner.of({
+              scan: Effect.die("unused"),
+              listSessionThreads: () => Effect.succeed(listed),
+              recentThreads: () => Stream.empty,
+            }),
+          ),
+          Effect.provideService(
+            OrchestrationEngine.OrchestrationEngineService,
+            makeEngine(commands),
+          ),
+          Effect.provideService(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            makeDirectory([]),
+          ),
+          Effect.provide(
+            makeSnapshotsLayer({
+              project: makeProject(),
+              getThread: () => Option.some(touchedThread),
+            }),
+          ),
+        );
+
+        // The user's messages are untouched: the replace was refused.
+        expect(result).toEqual({ importedCount: 0, skippedCount: 1 });
         expect(commands).toEqual([]);
       }),
     );

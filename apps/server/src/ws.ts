@@ -708,6 +708,7 @@ const makeWsRpcLayer = (
               updatedAt: entry.thread.updatedAt,
               messageCount: entry.thread.messages.length,
               alreadyImported: entry.alreadyImported,
+              ...(entry.stale ? { stale: true } : {}),
             })),
           } satisfies AgentSessionListSessionsResult;
         });
