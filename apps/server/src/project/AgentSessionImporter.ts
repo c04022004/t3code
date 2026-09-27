@@ -418,7 +418,7 @@ export const importAgentSessionsById = Effect.fn("importAgentSessionsById")(func
     const key = `${entry.thread.providerInstanceId}\0${entry.thread.providerSessionId}`;
     if (!requested.has(key)) continue;
     requested.delete(key);
-    const isUpdate = input.mode === "update" && entry.alreadyImported && entry.stale;
+    const isUpdate = input.mode !== "fresh" && entry.alreadyImported && entry.stale;
     const imported = yield* importTranscriptCore({
       projectId: input.projectId,
       workspaceRoot,

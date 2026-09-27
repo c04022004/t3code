@@ -1345,7 +1345,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       }),
     );
 
-    it.effect("update mode replaces a stale imported thread with fresh history", () =>
+    it.effect("auto mode replaces a stale imported thread with fresh history", () =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationCommand> = [];
         const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
@@ -1361,7 +1361,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
 
         const result = yield* importAgentSessionsById({
           projectId: PROJECT_ID,
-          mode: "update",
+          mode: "auto",
           sessions: [
             {
               providerInstanceId: ProviderInstanceId.make("claudeAgent"),
@@ -1411,7 +1411,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       }),
     );
 
-    it.effect("update mode refuses to replace a thread the user has chatted in", () =>
+    it.effect("auto mode refuses to replace a thread the user has chatted in", () =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationCommand> = [];
         const claudeThread = makeThread("claudeAgent");
@@ -1431,7 +1431,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
 
         const result = yield* importAgentSessionsById({
           projectId: PROJECT_ID,
-          mode: "update",
+          mode: "auto",
           sessions: [
             {
               providerInstanceId: ProviderInstanceId.make("claudeAgent"),
