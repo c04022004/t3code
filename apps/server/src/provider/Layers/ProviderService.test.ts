@@ -5065,78 +5065,75 @@ describe("agent browser access", () => {
       return issued;
     });
 
-  // The capability on the credential is the observable that matters: a session
-  // always gets a credential (the pull request toolkit is never withheld), and
-  // `preview` on it is what actually grants or denies the browser tools.
-  it.effect("issues a credential without preview when agent browser access is off", () =>
+  // Local-only patch: the t3-code MCP server is never attached, so no
+  // credential is issued regardless of the access settings. These tests
+  // pin that invariant across the same access combinations the old
+  // per-capability tests covered.
+  it.effect("issues no MCP credential when agent browser access is off", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-off");
 
       const issued = yield* startSessionWith(false, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("issues a credential with preview when agent browser access is on", () =>
+  it.effect("issues no MCP credential when agent browser access is on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-on");
 
       const issued = yield* startSessionWith(true, threadId);
 
-      assert.deepEqual(issued, [
-        { threadId, capabilities: ["device", "preview", "pull-requests"] },
-      ]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("drops only the preview capability when browser access alone is off", () =>
+  it.effect("issues no MCP credential with browser off and device on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-off-device-on");
 
       const issued = yield* startSessionWith({ browser: false, device: true }, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("issues a credential without preview when the project disables browser access", () =>
+  it.effect("issues no MCP credential when the project disables browser access", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off");
       const issued = yield* startSessionWith({ browser: true, device: false }, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("a project browser override leaves device access alone", () =>
+  it.effect("issues no MCP credential with a project browser override", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off-device-on");
       const issued = yield* startSessionWith(true, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("requests an MCP credential when the project overrides browser access to on", () =>
+  it.effect("issues no MCP credential when the project overrides browser access to on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, true);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("a project device override grants device access when the environment denies it", () =>
+  it.effect("issues no MCP credential with a project device override", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-device-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, {
         device: true,
       });
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // Without orchestration the project cannot be resolved, so an overridden
-  // capability is withheld; one no project overrides keeps its environment value.
-  it.effect("withholds only the overridden capability when the project cannot be resolved", () =>
+  it.effect("issues no MCP credential when the project cannot be resolved", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-no-orchestration-device-override");
       const issued = yield* startSessionWith(
@@ -5145,7 +5142,7 @@ describe("agent browser access", () => {
         { device: false },
         { withoutOrchestration: true },
       );
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

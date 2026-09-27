@@ -725,7 +725,7 @@ function normalizeClaudeActiveTokenUsage(
   return makeClaudeTokenUsageSnapshot({
     activeTokens,
     inputTokens,
-    cachedInputTokens,
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     outputTokens,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
