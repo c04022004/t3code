@@ -9492,6 +9492,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
+                expandAllToolGroups={settings.timelineToolRowsExpanded}
                 workspaceRoot={
                   paintOnlyDisplayedTimeline
                     ? (heldPaintContext?.workspaceRoot ?? undefined)
