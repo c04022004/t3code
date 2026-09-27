@@ -940,23 +940,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId);
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
-      if (credential) {
-        const deviceEnvironment = capabilities.has("device")
-          ? yield* agentDeviceEnvironment
-          : undefined;
-        yield* Effect.sync(() =>
-          McpProviderSession.setMcpProviderSession({
-            ...credential.config,
-            ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
-          }),
-        );
-      }
-      return credential;
-    });
+  // Local-only patch: the `t3-code` MCP server is never attached to provider
+  // sessions. Skipping credential issuance leaves every downstream path in
+  // its no-registry shape — adapters skip the mcpServers block, the agent
+  // sees no t3-code tools, and the agent-device PATH shim is not applied.
+  // Revert this early return to restore PR linking, preview, and device
+  // tools together.
+  const prepareMcpSession = (_threadId: ThreadId, _providerInstanceId: ProviderInstanceId) =>
+    Effect.void as Effect.Effect<McpSessionRegistry.McpIssuedCredential | undefined>;
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
