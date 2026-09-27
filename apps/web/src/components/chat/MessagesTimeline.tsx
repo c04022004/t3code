@@ -415,6 +415,8 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
+  /** Local-only: render every tool group expanded (one row per tool call). */
+  expandAllToolGroups?: boolean;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
@@ -483,6 +485,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   timestampFormat,
+  expandAllToolGroups = false,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   anchorMessageId,
@@ -724,6 +727,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         liveAgentTaskIds,
         worktreeSetup,
         queuedMessages,
+        expandAllToolGroups,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
         ? previous.projection
@@ -747,6 +751,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     liveAgentTaskIds,
     worktreeSetup,
     queuedMessages,
+    expandAllToolGroups,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);

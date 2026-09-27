@@ -578,6 +578,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
         ? ["Collapse composer on scroll"]
         : []),
+      ...(settings.timelineToolRowsExpanded !== DEFAULT_UNIFIED_SETTINGS.timelineToolRowsExpanded
+        ? ["Expand all tool call rows"]
+        : []),
       ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
         ? ["Follow-up behavior"]
         : []),
@@ -649,6 +652,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.timelineToolRowsExpanded,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -754,6 +758,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      timelineToolRowsExpanded: DEFAULT_UNIFIED_SETTINGS.timelineToolRowsExpanded,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -2062,6 +2067,19 @@ function LegacyFeaturesSection() {
                     updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
                   }
                   aria-label="Context window indicator (legacy)"
+                />
+              }
+            />
+            <SettingsRow
+              {...searchableSetting("expand-tool-call-rows")}
+              description="Show each tool call as its own row in the conversation instead of a collapsed summary."
+              control={
+                <Switch
+                  checked={settings.timelineToolRowsExpanded}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ timelineToolRowsExpanded: Boolean(checked) })
+                  }
+                  aria-label="Expand tool call rows"
                 />
               }
             />

@@ -406,6 +406,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer meter usage tokens circle old"],
   },
   {
+    id: "expand-tool-call-rows",
+    title: "Expand tool call rows",
+    to: "/settings/general",
+    searchTerms: ["tool calls individual rows expanded timeline activity"],
+  },
+  {
     id: "legacy-sidebar",
     title: "Sidebar (legacy)",
     to: "/settings/general",
